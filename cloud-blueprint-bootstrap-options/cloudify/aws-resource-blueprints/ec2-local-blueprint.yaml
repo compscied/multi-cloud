@@ -1,0 +1,134 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+description: >
+  This blueprint creates an EC2 Instance, Security Group, Key, and Elastic IP.
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/3.4/types.yaml
+  - http://www.getcloudify.org/spec/aws-plugin/1.4.1/plugin.yaml
+
+inputs:
+
+  aws_access_key_id:
+    description: YOUR AWS ACCESS KEY ID
+
+  aws_secret_access_key:
+    description: YOUR AWS SECRET ACCESS KEY
+
+  ec2_region_name:
+    default: us-east-1
+
+  ec2_region_endpoint:
+    default: ec2.us-east-1.amazonaws.com
+
+  ami_image_id:
+    default: ami-fce3c696
+
+  windows_ami_image_id:
+    default: ami-79dc1b14
+
+  instance_type:
+    default: m3.medium
+
+  key_save_path:
+    description: There path to save this key.
+    default: ~/.ssh/aws-infrastructure.pem
+
+dsl_definitions:
+
+  aws_config: &AWS_CONFIG
+    aws_access_key_id: { get_input: aws_access_key_id }
+    aws_secret_access_key: { get_input: aws_secret_access_key }
+    ec2_region_name: { get_input: ec2_region_name }
+    ec2_region_endpoint: { get_input: ec2_region_endpoint }
+
+node_templates:
+
+  windows_host:
+    type: cloudify.aws.nodes.WindowsInstance
+    properties:
+      name: AWS EC2 Windows Host
+      image_id: { get_input: windows_ami_image_id }
+      instance_type: { get_input: instance_type }
+      agent_config:
+        install_method: none
+      aws_config: *AWS_CONFIG
+      parameters:
+        user_data: |
+          <powershell>
+          &winrm quickconfig -q
+          &winrm set winrm/config              '@{MaxTimeoutms="1800000"}'
+          &winrm set winrm/config/winrs        '@{MaxMemoryPerShellMB="300"}'
+          &winrm set winrm/config/service      '@{AllowUnencrypted="true"}'
+          &winrm set winrm/config/service/auth '@{Basic="true"}'
+          &netsh advfirewall firewall add rule name="WinRM 5985" protocol=TCP dir=in localport=5985 action=allow
+          &netsh advfirewall firewall add rule name="WinRM 5986" protocol=TCP dir=in localport=5986 action=allow
+          </powershell>
+    relationships:
+      - target: key
+        type: cloudify.aws.relationships.instance_connected_to_keypair
+      - target: windows_ip
+        type: cloudify.aws.relationships.instance_connected_to_elastic_ip
+      - target: group
+        type: cloudify.aws.relationships.instance_connected_to_security_group
+
+  linux_host:
+    type: cloudify.aws.nodes.Instance
+    properties:
+      name: AWS EC2 Linux Host
+      image_id: { get_input: ami_image_id }
+      instance_type: { get_input: instance_type }
+      agent_config:
+        install_method: none
+      aws_config: *AWS_CONFIG
+    relationships:
+      - target: key
+        type: cloudify.aws.relationships.instance_connected_to_keypair
+      - target: linux_ip
+        type: cloudify.aws.relationships.instance_connected_to_elastic_ip
+      - target: group
+        type: cloudify.aws.relationships.instance_connected_to_security_group
+
+  key:
+    type: cloudify.aws.nodes.KeyPair
+    properties:
+      private_key_path: { get_input: key_save_path }
+      aws_config: *AWS_CONFIG
+
+  group:
+    type: cloudify.aws.nodes.SecurityGroup
+    properties:
+      description: Infrastructure Blueprint
+      rules:
+        - ip_protocol: tcp
+          from_port: 22
+          to_port: 22
+          cidr_ip: 0.0.0.0/0
+        - ip_protocol: tcp
+          from_port: 5985
+          to_port: 5985
+          cidr_ip: 0.0.0.0/0
+        - ip_protocol: tcp
+          from_port: 5986
+          to_port: 5986
+          cidr_ip: 0.0.0.0/0
+      aws_config: *AWS_CONFIG
+
+  windows_ip:
+    type: cloudify.aws.nodes.ElasticIP
+    properties:
+      aws_config: *AWS_CONFIG
+
+  linux_ip:
+    type: cloudify.aws.nodes.ElasticIP
+    properties:
+      aws_config: *AWS_CONFIG
+
+outputs:
+
+  info:
+    description: Infrastructure Endpoints
+    value:
+      windows_ip: { get_attribute: [ windows_ip, aws_resource_id ] }
+      linux_ip: { get_attribute: [ linux_ip, aws_resource_id ] }
+      windows_password: { get_attribute: [ windows_host, password ] }

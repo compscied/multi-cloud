@@ -1,0 +1,7 @@
+---
+- hosts: all
+  remote_user: root
+  roles:
+    - role: ansible-role-kubernetes
+      # Can't test admin/development as kubeadm requires systemd to install
+      kubernetes_node_type: master

@@ -1,0 +1,140 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+description: >
+  This blueprint creates an EC2 Instance, Security Group, Key, and Elastic IP.
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/3.4/types.yaml
+  - http://www.getcloudify.org/spec/aws-plugin/1.4.1/plugin.yaml
+
+inputs:
+
+  aws_access_key_id:
+    description: YOUR AWS ACCESS KEY ID
+
+  aws_secret_access_key:
+    description: YOUR AWS SECRET ACCESS KEY
+
+  ec2_region_name:
+    default: eu-central-1
+
+  ec2_region_endpoint:
+    default: ec2.eu-central-1.amazonaws.com
+
+  availability_zone:
+    default: eu-central-1b
+
+  ami_image_id:
+    default: ami-00dae61d
+
+  instance_type:
+    default: m3.medium
+
+  key_save_path:
+    description: There path to save this key.
+    default: ~/.ssh/vpc-infrastructure.pem
+
+dsl_definitions:
+
+  aws_config: &AWS_CONFIG
+    aws_access_key_id: { get_input: aws_access_key_id }
+    aws_secret_access_key: { get_input: aws_secret_access_key }
+    ec2_region_name: { get_input: ec2_region_name }
+    ec2_region_endpoint: { get_input: ec2_region_endpoint }
+
+node_templates:
+
+#  demo_host:
+#    type: cloudify.aws.nodes.Instance
+#    properties:
+#      name: AWS EC2 Host
+#      image_id: { get_input: ami_image_id }
+#      instance_type: { get_input: instance_type }
+#      parameters:
+#        placement: { get_property: [ demo_subnet, availability_zone ] }
+#      agent_config:
+#        install_method: none
+#      aws_config: *AWS_CONFIG
+#    relationships:
+#      - type: cloudify.aws.relationships.instance_contained_in_subnet
+#        target: demo_subnet
+#      - type: cloudify.aws.relationships.instance_connected_to_security_group
+#        target: demo_group
+#      - type: cloudify.aws.relationships.instance_connected_to_keypair
+#        target: demo_key
+#      - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
+#        target: demo_ip
+
+  demo_ip:
+    type: cloudify.aws.nodes.ElasticIP
+    properties:
+      aws_config: *AWS_CONFIG
+      domain: vpc
+    relationships:
+      - type: cloudify.relationships.depends_on
+        target: demo_internet_gateway
+
+  demo_key:
+    type: cloudify.aws.nodes.KeyPair
+    properties:
+      private_key_path: { get_input: key_save_path }
+      aws_config: *AWS_CONFIG
+
+  demo_group:
+    type: cloudify.aws.nodes.SecurityGroup
+    properties:
+      description: VPC Infrastructure Blueprint
+      rules:
+        - ip_protocol: tcp
+          from_port: 22
+          to_port: 22
+          cidr_ip: 0.0.0.0/0
+      aws_config: *AWS_CONFIG
+    relationships:
+      - type: cloudify.aws.relationships.security_group_contained_in_vpc
+        target: demo_vpc
+
+  demo_route_table:
+    type: cloudify.aws.nodes.RouteTable
+    properties:
+      aws_config: *AWS_CONFIG
+    relationships:
+      - type: cloudify.aws.relationships.routetable_contained_in_vpc
+        target: demo_vpc
+      - type: cloudify.aws.relationships.routetable_associated_with_subnet
+        target: demo_subnet
+      - type: cloudify.aws.relationships.route_table_to_gateway
+        target: demo_internet_gateway
+
+  demo_internet_gateway:
+    type: cloudify.aws.nodes.InternetGateway
+    properties:
+      aws_config: *AWS_CONFIG
+    relationships:
+      - type: cloudify.aws.relationships.gateway_connected_to_vpc
+        target: demo_vpc
+
+  demo_subnet:
+    type: cloudify.aws.nodes.Subnet
+    properties:
+      cidr_block: 10.0.0.0/24
+      availability_zone: { get_input: availability_zone }
+      aws_config: *AWS_CONFIG
+    relationships:
+      - type: cloudify.aws.relationships.subnet_contained_in_vpc
+        target: demo_vpc
+
+  demo_vpc:
+    type: cloudify.aws.nodes.VPC
+    properties:
+      cidr_block: 10.0.0.0/16
+      aws_config: *AWS_CONFIG
+
+outputs:
+
+  info:
+    description: VPC Infrastructure Endpoints
+    value:
+      ip: { get_attribute: [ demo_ip, aws_resource_id ] }
+
+

@@ -1,0 +1,31 @@
+{
+    "keystone_username": "USERNAME",
+    "keystone_password": "PASSWORD",
+    "keystone_tenant_name": "Projects Name",
+    "keystone_url": "https://region-a.geo-1.identity.hpcloudsvc.com:35357/v2.0/",
+    "region": "region-a.geo-1",
+    "manager_public_key_name": "manager",
+    "agent_public_key_name": "agent",
+    "image_id": "43804523-7e3b-4adf-b6df-9d11d451c463",
+    "flavor_id": "101",
+    "external_network_name": "Ext-Net",
+    "use_existing_manager_keypair": false,
+    "use_existing_agent_keypair": false,
+    "manager_server_name": "scaledb-management-server",
+    "manager_server_user": "ubuntu",
+    "manager_private_key_path": "~/.ssh/manager.pem",
+    "agent_private_key_path": "~/.ssh/agent.pem",
+    "agents_user": "ubuntu",
+    "resources_prefix": "ScaleDB",
+    "management_network_name": "cloudify-management-network",
+    "management_subnet_name": "cloudify-management-network-subnet",
+    "management_router": "cloudify-management-router",
+    "manager_security_group_name": "cloudify-sg-manager",
+    "agents_security_group_name": "cloudify-sg-agents",
+    "manager_port_name": "cloudify-manager-port",
+    "manager_volume_name": "cloudify-manager-volume",
+    "nova_url": '',
+    "neutron_url": ''
+}
+
+

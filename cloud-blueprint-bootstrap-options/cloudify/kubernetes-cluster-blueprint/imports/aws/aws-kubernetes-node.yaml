@@ -1,0 +1,96 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/3.4/types.yaml
+  - aws-node-vm.yaml
+
+dsl_definitions:
+
+  kubernetes_environment: &kubernetes_environment
+    the_master_ip_here: { get_attribute: [ kubernetes_master_vm, ip ] }
+
+node_templates:
+
+  aws_docker_kubernetes_node:
+    # installs Docker if Docker is not installed.
+    # Starts the Docker Bootstrap daemon.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/docker/install.py
+        start:
+          implementation: scripts/docker/bootstrap.py
+          inputs:
+            <<: *kubernetes_environment
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: aws_kubernetes_node_vm
+
+  aws_flannel_kubernetes_node:
+    # Installs flannel on the node.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/flannel/node/create.py
+          inputs:
+            <<: *kubernetes_environment
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: aws_kubernetes_node_vm
+      - type: cloudify.relationships.depends_on
+        target: aws_docker_kubernetes_node
+      - type: cloudify.relationships.connected_to
+        target: kubernetes_dns
+
+  aws_kubernetes_node:
+    # This installs the Hyperkube process on the node host.
+    # The verify.py script checks that the host has been added to the nodes in the master.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        start:
+          implementation: scripts/kubernetes/node/start.py
+          inputs:
+            <<: *kubernetes_environment
+        stop:
+          implementation: scripts/kubernetes/node/stop.py
+          executor: central_deployment_agent
+          inputs:
+            master_ip: { get_attribute: [ kubernetes_master_vm, ip ] }
+    relationships:
+      - type: cloudify.relationships.connected_to
+        target: kubernetes_master
+      - type: cloudify.relationships.contained_in
+        target: aws_kubernetes_node_vm
+      - type: cloudify.relationships.depends_on
+        target: aws_flannel_kubernetes_node
+        target_interfaces:
+          cloudify.interfaces.relationship_lifecycle:
+            establish:
+              implementation: scripts/kubernetes/verify.py
+              executor: central_deployment_agent
+              inputs:
+                master_ip: { get_attribute: [ kubernetes_master_vm, ip ] }
+                hostname: {}
+                max_retries: 30
+
+  aws_node_sanity_application:
+    # This node is a test application.
+    # The nginx application is defined in scripts/kubernetes/resources is the same as located here: https://github.com/kubernetes/kubernetes/tree/v1.2.0/docs/user-guide/walkthrough
+    # The service is started via the API. The API returns the IP and Port of the service.
+    # The test_running.py script checks to see if 200 is returned from the IP/Port.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/kubernetes/test_api.py
+          executor: central_deployment_agent
+        start:
+          implementation: scripts/kubernetes/test_running.py
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: kubernetes_master_vm
+      - type: cloudify.relationships.depends_on
+        target: aws_kubernetes_node

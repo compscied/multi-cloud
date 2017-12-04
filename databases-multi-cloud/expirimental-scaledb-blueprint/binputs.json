@@ -1,0 +1,7 @@
+{
+    "image_name": "CentOS 6.3 Server 64-bit 20130116",
+    "flavor_name": "standard.medium",
+    "cas_flavor": "standard.small",
+    "agent_user": "root"
+}
+

@@ -1,0 +1,126 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+imports:
+  - openstack-network.yaml
+  - openstack-master-vm.yaml
+  - openstack-kubernetes-node.yaml
+
+inputs:
+
+  ### OPENSTACK CREDS
+  keystone_username:
+    default: ''
+    type: string
+
+  keystone_password:
+    default: ''
+    type: string
+
+  keystone_tenant_name:
+    default: ''
+    type: string
+
+  keystone_url:
+    default: ''
+    type: string
+
+  region:
+    default: ''
+    type: string
+
+  nova_url:
+    default: ''
+    type: string
+
+  neutron_url:
+    default: ''
+    type: string
+
+  openstack_management_network_name:
+    default: ''
+
+groups:
+
+ openstack_kubernetes_node_group:
+   # This is a Kubernetes Node that will be scaled or healed.
+   # It includes all of the compenents that will create a fully functioning node.
+   members:
+     - openstack_kubernetes_node_vm
+     - openstack_docker_kubernetes_node
+     - openstack_flannel_kubernetes_node
+     - openstack_kubernetes_node
+
+ openstack_scale_up_group:
+   members: [openstack_kubernetes_node_group]
+    # This defines a scale group whose members may be scaled up, incrementing by 1.
+    # The scale worflow is called when the following criteria are met
+    # The Hyperkube process total CPU will be more than 3 for a total of 10 seconds.
+    # No more than 6 hosts will be allowed.
+   policies:
+     auto_scale_up:
+       type: scale_policy_type
+       properties:
+         policy_operates_on_group: true
+         scale_limit: 6
+         scale_direction: '<'
+         scale_threshold: 8
+         service_selector: .*openstack_kubernetes_node_vm.*.process.hyperkube.cpu.percent
+         cooldown_time: 60
+       triggers:
+         execute_scale_workflow:
+           type: cloudify.policies.triggers.execute_workflow
+           parameters:
+             workflow: scale
+             workflow_parameters:
+               delta: 1
+               scalable_entity_name: openstack_kubernetes_node_group
+               scale_compute: true
+
+ openstack_scale_down_group:
+   # This defines a scale group whose members may be scaled down. Only one host will be removed per run.
+   # The scale worflow is called when the following criteria are met
+   # The Hyperkube process total CPU will be less than 1 for a total of 200 seconds.
+   # No less than 2 hosts will be allowed.
+   members: [openstack_kubernetes_node_group]
+   policies:
+     auto_scale_down:
+       type: scale_policy_type
+       properties:
+         scale_limit: 2
+         scale_direction: '>'
+         scale_threshold: 5
+         service_selector: .*openstack_kubernetes_node_vm.*.process.hyperkube.cpu.percent
+         cooldown_time: 60
+         moving_window_size: 200
+       triggers:
+         execute_scale_workflow:
+           type: cloudify.policies.triggers.execute_workflow
+           parameters:
+             workflow: scale
+             workflow_parameters:
+               delta: -1
+               scalable_entity_name: openstack_kubernetes_node_group
+               scale_compute: true
+
+ openstack_heal_group:
+   # This defines a group of hosts in members that may be healed.
+   # The heal workflow is called when a the following policy criteria are met.
+   # Either the hyperkube process on the host, or the total host CPU need fall silent.
+   # The host and all software that it is supposed to have running on it will be healed.
+   members: [openstack_kubernetes_node_vm]
+   policies:
+     simple_autoheal_policy:
+       type: cloudify.policies.types.host_failure
+       properties:
+         service:
+           - .*openstack_kubernetes_node_vm.*.cpu.total.system
+           - .*openstack_kubernetes_node_vm.*.process.hyperkube.cpu.percent
+         interval_between_workflows: 60
+       triggers:
+         auto_heal_trigger:
+           type: cloudify.policies.triggers.execute_workflow
+           parameters:
+             workflow: heal
+             workflow_parameters:
+               node_instance_id: { 'get_property': [ SELF, node_id ] }
+               diagnose_value: { 'get_property': [ SELF, diagnose ] }

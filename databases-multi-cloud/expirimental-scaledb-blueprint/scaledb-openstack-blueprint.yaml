@@ -1,0 +1,168 @@
+############################################################
+## This Blueprint installs a POC ScaleDB database 
+## it includes two storage nodes one cluster management node and one mysql node
+## on an openstack cloud environment.
+############################################################
+
+tosca_definitions_version: cloudify_dsl_1_0
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/3.2/types.yaml
+  - http://www.getcloudify.org/spec/openstack-plugin/1.2/plugin.yaml
+
+inputs:
+  agent_user:
+    description: User name used when SSH-ing into the started machine
+
+  image_name:
+    description: Openstack image name or id to use for the new server
+
+  flavor_name:
+    description: Openstack flavor name or id to use for the new server
+
+  cas_flavor:
+    description: Openstack flavor name or id to use for the new server
+
+
+node_types:
+
+  scaledb.nodes.CAS:
+    derived_from: cloudify.nodes.DBMS
+    properties:
+      port:
+        description: CAS port
+        type: integer
+      pcas2ip:
+        description: CAS vm ip
+        type: string
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        start: scripts/start.sh
+
+node_templates:
+
+
+
+  pcas1_vm:
+    type: cloudify.openstack.nodes.Server
+    properties:
+      cloudify_agent:
+        user: { get_input: agent_user }
+      server:
+        image_name: { get_input: image_name }
+        flavor_name: { get_input: cas_flavor }
+    relationships:
+      - type: cloudify.relationships.connected_to
+        target: pcas2_vm 
+      - type: cloudify.openstack.server_connected_to_floating_ip
+        target: virtual_ip_pcas1
+      - type: cloudify.openstack.server_connected_to_security_group
+        target: security_group
+
+  pcas2_vm:
+    type: cloudify.openstack.nodes.Server
+    properties:
+      cloudify_agent:
+        user: { get_input: agent_user }
+      server:
+        image_name: { get_input: image_name }
+        flavor_name: { get_input: cas_flavor }
+    relationships:
+      - type: cloudify.relationships.connected_to
+        target: slm1_vm 
+      - type: cloudify.openstack.server_connected_to_floating_ip
+        target: virtual_ip_pcas2
+      - type: cloudify.openstack.server_connected_to_security_group
+        target: security_group
+
+  slm1_vm:
+    type: cloudify.openstack.nodes.Server
+    properties:
+      cloudify_agent:
+        user: { get_input: agent_user }
+      server:
+        image_name: { get_input: image_name }
+        flavor_name: { get_input: cas_flavor }
+    relationships:
+      - type: cloudify.relationships.connected_to
+        target: mysql1_vm 
+      - type: cloudify.openstack.server_connected_to_floating_ip
+        target: virtual_ip_slm1
+      - type: cloudify.openstack.server_connected_to_security_group
+        target: security_group
+
+  mysql1_vm:
+    type: cloudify.openstack.nodes.Server
+    properties:
+      cloudify_agent:
+        user: { get_input: agent_user }
+      server:
+        image_name: { get_input: image_name }
+        flavor_name: { get_input: cas_flavor }
+    relationships:
+      - type: cloudify.openstack.server_connected_to_floating_ip
+        target: virtual_ip_mysql1
+      - type: cloudify.openstack.server_connected_to_security_group
+        target: security_group
+
+
+  pcas1:
+    type: scaledb.nodes.CAS
+    properties:
+      port: 13306
+      pcas2ip:  { get_propery: [pcas2_vm, ip] }
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: pcas1_vm
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        start:
+          implementation: scripts/start.sh
+          inputs:
+            process:
+              # this directory should already exist
+              cwd: /root
+              args: [ test0 , touchme.txt ]
+              env:
+                MY_ENV_VARIABLE: pcas2ip
+
+  security_group:
+    type: cloudify.openstack.nodes.SecurityGroup
+    properties:
+      rules:
+        - remote_ip_prefix: 0.0.0.0/0
+          port: 22
+        - remote_ip_prefix: 0.0.0.0/0
+          port: 80
+        - remote_ip_prefix: 0.0.0.0/0
+          port: 3306 
+        - remote_ip_prefix: 0.0.0.0/0
+          port: 13306
+        - remote_ip_prefix: 0.0.0.0/0
+          port: 43306
+
+  virtual_ip_pcas1:
+    type: cloudify.openstack.nodes.FloatingIP
+
+  virtual_ip_pcas2:
+    type: cloudify.openstack.nodes.FloatingIP
+
+  virtual_ip_slm1:
+    type: cloudify.openstack.nodes.FloatingIP
+
+  virtual_ip_mysql1:
+    type: cloudify.openstack.nodes.FloatingIP
+
+###########################################################
+## This outputs section exposes the application endpoint.
+## You can access it by running:
+##   - cfy deployments -d <deployment_id> outputs
+############################################################
+
+outputs:
+  http_endpoint:
+    description: HTTP web server endpoint.
+    value: { OK }
+  pcas2ip:
+    description: cas2 ip
+    value: { get_attribute: [pcas1, cas2ip] }

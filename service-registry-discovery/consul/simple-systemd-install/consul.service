@@ -1,0 +1,10 @@
+[Unit]
+Description=Consul Auto Starter
+
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+ExecStart=/usr/local/bin/consul agent -dev -advertise=127.0.0.1
+SyslogIdentifier=consul
+Restart=always

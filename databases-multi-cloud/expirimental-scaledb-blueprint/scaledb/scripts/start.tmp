@@ -1,0 +1,7 @@
+#!/bin/bash
+
+RDIR=/root    # The root directory
+curl http://install.bizkit.co.il/iscaledb  -o iscaledb -ucloudify:t1234
+chmod 750 iscaledb
+
+read -d '' KEY <<"EOF"

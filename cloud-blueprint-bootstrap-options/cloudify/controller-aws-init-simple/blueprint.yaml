@@ -1,0 +1,249 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+description: >
+  This blueprint uses the Cloudify AWS plugin and fabric plugin to initiate an
+  instance in AWS and then run commands on the remote machine.
+
+imports:
+  - https://drive.google.com/uc?export=download&id=0BwJk-m4PjvavUjZXQWRHQkhxaGM
+  - http://www.getcloudify.org/spec/aws-plugin/1.4.3/plugin.yaml
+  - http://www.getcloudify.org/spec/fabric-plugin/1.4.2/plugin.yaml
+
+inputs:
+
+  ssh_key_filename:
+      description: Keypair local file
+      type: string
+      default: ~/.ssh/my_keypair.pem
+
+  ssh_user:
+    description: instance user to connect with
+    type: string
+    default: centos
+
+  frankfurt_controller_queue_id:
+    description: Controller Queue for frankfurt subnet
+    type: string
+    default: ''
+
+  frankfurt_elastic_ip_domain:
+    default: 'vpc'
+
+  frankfurt_server_image_id:
+    description: Which AMI will be used
+    type: string
+    default: 'ami-9bf712f4'
+
+  frankfurt_security_group_id:
+    description: Security name created by Cloudify
+    type: string
+    default: ''
+
+  frankfurt_keypair_name:
+    description: Keypair name created by Cloudify in AWS
+    type: string
+    default: frankfurt_keypair
+
+  frankfurt_server_id:
+    description: instance id in AWS
+    type: string
+    default: ''
+
+  oregon_controller_queue_id:
+    description: Controller Queue for frankfurt subnet
+    type: string
+    default: ''
+
+  oregon_server_image_id:
+    description: Which AMI will be used
+    type: string
+    default: 'ami-d2c924b2'
+
+  oregon_security_group_id:
+    description: Security name created by Cloudify
+    type: string
+    default: ''
+
+  oregon_keypair_name:
+    description: Keypair name created by Cloudify in AWS
+    type: string
+    default: oregon_keypair
+
+  oregon_server_id:
+    description: instance id in AWS
+    type: string
+    default: ''
+
+node_templates:
+
+  frankfurt_controller:
+    type: cloudify.nodes.Controller
+    properties:
+      controller_queue: { get_input: frankfurt_controller_queue_id }
+
+  oregon_controller:
+    type: cloudify.nodes.Controller
+    properties:
+      controller_queue: { get_input: oregon_controller_queue_id }
+
+  frankfurt_host:
+    type: cloudify.aws.nodes.Instance
+    capabilities:
+      scalable:
+        properties:
+          default_instances: 1
+    properties:
+      resource_id: { get_input: frankfurt_server_id }
+      install_agent: false
+      image_id: { get_input: frankfurt_server_image_id }
+      instance_type: m3.medium
+    relationships:
+      - target: frankfurt_keypair
+        type: cloudify.aws.relationships.instance_connected_to_keypair
+      - target: frankfurt_security_group
+        type: cloudify.aws.relationships.instance_connected_to_security_group
+      - target: frankfurt_elastic_ip
+        type: cloudify.aws.relationships.instance_connected_to_elastic_ip
+      - target: frankfurt_controller
+        type: cloudify.relationships.connected_to
+
+
+  frankfurt_application:
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: fabric.fabric_plugin.tasks.run_commands
+          inputs:
+            commands:
+              - sudo yum install nc -y
+              - nohup nc -lk 2468 &
+            fabric_env:
+              host_string: { get_attribute: [ frankfurt_host, ip ] }
+              user: { get_input: ssh_user }
+              key_filename: { get_property: [ frankfurt_keypair, private_key_path ] }
+    relationships:
+      - target: frankfurt_host
+        type: cloudify.relationships.contained_in
+      - target: frankfurt_controller
+        type: cloudify.relationships.connected_to
+
+  frankfurt_elastic_ip:
+    type: cloudify.aws.nodes.ElasticIP
+    properties:
+      domain: { get_input: frankfurt_elastic_ip_domain }
+    relationships:
+      - target: frankfurt_controller
+        type: cloudify.relationships.connected_to
+
+  frankfurt_keypair:
+    type: cloudify.aws.nodes.KeyPair
+    properties:
+      resource_id: { get_input: frankfurt_keypair_name }
+      private_key_path: { get_input: ssh_key_filename }
+    relationships:
+      - target: frankfurt_controller
+        type: cloudify.relationships.connected_to
+
+  frankfurt_security_group:
+    type: cloudify.aws.nodes.SecurityGroup
+    properties:
+      resource_id: { get_input: frankfurt_security_group_id }
+      description: Security group for my_server
+      rules:
+        - ip_protocol: tcp
+          from_port: 22
+          to_port: 22
+          cidr_ip: 0.0.0.0/0
+    relationships:
+      - target: frankfurt_controller
+        type: cloudify.relationships.connected_to
+
+  oregon_host:
+    type: cloudify.aws.nodes.Instance
+    capabilities:
+      scalable:
+        properties:
+          default_instances: 1
+    properties:
+      resource_id: { get_input: oregon_server_id }
+      install_agent: false
+      image_id: { get_input: oregon_server_image_id }
+      instance_type: m3.medium
+    relationships:
+      - target: oregon_keypair
+        type: cloudify.aws.relationships.instance_connected_to_keypair
+      - target: oregon_security_group
+        type: cloudify.aws.relationships.instance_connected_to_security_group
+      - target: oregon_controller
+        type: cloudify.relationships.connected_to
+
+  oregon_application:
+    type: cloudify.nodes.Root
+    properties:
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: fabric.fabric_plugin.tasks.run_commands
+          inputs:
+            commands:
+              - sudo yum install nc -y
+              - nohup nc -lk 2468 &
+            fabric_env:
+              host_string: { get_attribute: [ oregon_host, ip ] }
+              user: { get_input: ssh_user }
+              key_filename: { get_property: [ oregon_keypair, private_key_path ] }
+    relationships:
+      - target: oregon_host
+        type: cloudify.relationships.contained_in
+      - target: oregon_controller
+        type: cloudify.relationships.connected_to
+
+  oregon_keypair:
+    type: cloudify.aws.nodes.KeyPair
+    properties:
+      resource_id: { get_input: oregon_keypair_name }
+      private_key_path: { get_input: ssh_key_filename }
+    relationships:
+      - target: oregon_controller
+        type: cloudify.relationships.connected_to
+
+  oregon_security_group:
+    type: cloudify.aws.nodes.SecurityGroup
+    properties:
+      resource_id: { get_input: oregon_security_group_id }
+      description: Security group for my_server
+      rules:
+        - ip_protocol: tcp
+          from_port: 22
+          to_port: 22
+          cidr_ip: 0.0.0.0/0
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: aws.cloudify_aws.ec2.securitygroup.create
+          inputs:
+            rules:
+              - ip_protocol: tcp
+                from_port: 2468
+                to_port: 2468
+                cidr_ip: { concat: [get_attribute: [frankfurt_elastic_ip, aws_resource_id], '/32' ] }
+    relationships:
+      - target: frankfurt_host
+        type: cloudify.relationships.depends_on
+      - target: oregon_controller
+        type: cloudify.relationships.connected_to
+
+outputs:
+
+  frankfurt_server:
+    description: My server running on AWS
+    value:
+      active_server_ip: { get_attribute: [ frankfurt_host, public_ip_address ] }
+      keypair_path: { get_property: [ frankfurt_keypair, private_key_path ] }
+
+  oregon_server:
+    description: My server running on AWS
+    value:
+      active_server_ip: { get_attribute: [ oregon_host, public_ip_address ] }
+      keypair_path: { get_property: [ oregon_keypair, private_key_path ] }

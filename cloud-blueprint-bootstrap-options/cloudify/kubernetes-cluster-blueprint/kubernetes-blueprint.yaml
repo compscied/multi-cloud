@@ -1,0 +1,170 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/3.4/types.yaml
+  - imports/scale.yaml
+  - imports/aws/blueprint.yaml
+#  - imports/openstack/blueprint.yaml
+
+
+inputs:
+
+  # Kubernetes
+  your_kubernetes_version:
+    description: >
+      The kubernetes version without the leading v.
+    default: '1.2.1'
+
+  your_etcd_version:
+    description: >
+      The etcd version.
+    default: '2.2.1'
+
+  your_flannel_version:
+    description: >
+      The flannel version
+    default: '0.5.5'
+
+  flannel_interface:
+    description: >
+      Which interface to bind flannel.
+    default: 'eth0'
+
+  flannel_ipmasq_flag:
+    description: >
+      Whether to ip masquerade.
+    default: 'true'
+
+dsl_definitions:
+
+  kubernetes_environment: &kubernetes_environment
+    the_master_ip_here: { get_attribute: [ kubernetes_master_vm, ip ] }
+
+node_templates:
+
+  docker_kubernetes_master:
+    # Installs Docker on the master VM if it is not already installed.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/docker/install.py
+        start:
+          implementation: scripts/docker/bootstrap.py
+          inputs:
+            <<: *kubernetes_environment
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: kubernetes_master_vm
+
+  etcd_kubernetes_master:
+    # Installs ETCD on the master.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/etcd/create.py
+          inputs:
+            <<: *kubernetes_environment
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: kubernetes_master_vm
+      - type: cloudify.relationships.depends_on
+        target: docker_kubernetes_master
+
+  flannel_kubernetes_master:
+    # Installs Flannel on the master.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/flannel/master/create.py
+          inputs:
+            <<: *kubernetes_environment
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: kubernetes_master_vm
+      - type: cloudify.relationships.depends_on
+        target: etcd_kubernetes_master
+
+  kubernetes_master:
+    # Installs hyperkube on the master VM.
+    # The verify script makes sure that the master is added to the nodes in the API.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        start:
+          implementation: scripts/kubernetes/master/start.py
+          inputs:
+            <<: *kubernetes_environment
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: kubernetes_master_vm
+      - type: cloudify.relationships.depends_on
+        target: flannel_kubernetes_master
+        target_interfaces:
+          cloudify.interfaces.relationship_lifecycle:
+            establish:
+              implementation: scripts/kubernetes/verify.py
+              executor: central_deployment_agent
+              inputs:
+                master_ip: { get_attribute: [ kubernetes_master_vm, ip ] }
+                hostname: {}
+                max_retries: 30
+
+  kube_system_namespace:
+    # This creates the kube-system namespace in Kubernetes.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/kubernetes/api/namespace.py
+          executor: central_deployment_agent
+          inputs:
+            namespace: 'kube-system'
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: kubernetes_master_vm
+      - type: cloudify.relationships.depends_on
+        target: kubernetes_master
+
+  kubernetes_dns:
+    # This creates Kubernetes DNS.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/kubernetes/dns.py
+          executor: central_deployment_agent
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: kubernetes_master_vm
+      - type: cloudify.relationships.depends_on
+        target: kube_system_namespace
+
+  kubernetes_dashboard:
+    # This runs the kubernetes dashboard on the master.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/kubernetes/dashboard.py
+          executor: central_deployment_agent
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: kubernetes_master_vm
+      - type: cloudify.relationships.depends_on
+        target: kubernetes_dns
+
+  kubectl:
+    # For convenience, we install the kubectl on your master.
+    type: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/kubernetes/kubectl.py
+          inputs:
+            kubectl_url: 'http://storage.googleapis.com/kubernetes-release/release/v1.0.1/bin/linux/amd64/kubectl'
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: kubernetes_master_vm
